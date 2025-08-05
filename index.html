@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat Privata</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; background: #f0f0f0; }
+    #chatBox { border: 1px solid #ccc; height: 300px; overflow-y: scroll; padding: 10px; background: #fff; margin-bottom: 10px; }
+    #login, #chat { display: none; }
+    input { padding: 5px; margin: 2px; }
+    button { padding: 5px 10px; margin: 2px; }
+    .message { margin-bottom: 8px; }
+    .seen { font-size: 0.8em; color: green; margin-top: 2px; }
+  </style>
+</head>
+<body>
+
+  <h2>Chat Privata</h2>
+
+  <div id="login">
+    <input type="password" id="codeInput" placeholder="Inserisci codice" />
+    <input type="text" id="nicknameInput" placeholder="Nickname" />
+    <button onclick="checkCode()">Entra</button>
+  </div>
+
+  <div id="chat">
+    <div id="chatBox"></div>
+    <input type="text" id="messageInput" placeholder="Scrivi un messaggio..." />
+    <button onclick="sendMessage()">Invia</button>
+  </div>
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, setDoc, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCm-mPCPu7tRtbUFdcg9DNkOhu-du4OPC4",
+      authDomain: "chat-94882.firebaseapp.com",
+      projectId: "chat-94882",
+      storageBucket: "chat-94882.firebasestorage.app",
+      messagingSenderId: "375767129705",
+      appId: "1:375767129705:web:82f2e5ef3b62decd8cccf8"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+
+    const loginDiv = document.getElementById("login");
+    const chatDiv = document.getElementById("chat");
+    const chatBox = document.getElementById("chatBox");
+    const codeInput = document.getElementById("codeInput");
+    const nicknameInput = document.getElementById("nicknameInput");
+    const messageInput = document.getElementById("messageInput");
+
+    const ACCESS_CODE = "0318";
+    let nickname = "";
+    let userId = "";
+
+    loginDiv.style.display = "block";
+
+    signInAnonymously(auth);
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        userId = user.uid;
+      }
+    });
+
+    window.checkCode = function() {
+      const enteredCode = codeInput.value.trim();
+      const enteredNick = nicknameInput.value.trim();
+      if (enteredCode === ACCESS_CODE && enteredNick !== "") {
+        nickname = enteredNick;
+        loginDiv.style.display = "none";
+        chatDiv.style.display = "block";
+        loadMessages();
+      } else {
+        alert("Codice errato o nickname mancante.");
+      }
+    };
+
+    async function loadMessages() {
+      const messagesRef = collection(db, "messages");
+      const q = query(messagesRef, orderBy("createdAt"));
+
+      onSnapshot(q, async (snapshot) => {
+        chatBox.innerHTML = "";
+        let lastMsgId = null;
+
+        for (const docSnap of snapshot.docs) {
+          const msg = docSnap.data();
+          const msgId = docSnap.id;
+          const div = document.createElement("div");
+          div.classList.add("message");
+
+          const name = msg.nickname || "Anonimo";
+          div.textContent = `${name}: ${msg.text}`;
+
+          // Verifica se il messaggio è stato visto da almeno un altro utente
+          const seenDocRef = doc(db, "seenStatus", msgId);
+          const seenDocSnap = await getDoc(seenDocRef);
+          let seenByOthers = false;
+
+          if (seenDocSnap.exists()) {
+            const seenData = seenDocSnap.data();
+            if (seenData.userIds && seenData.userIds.some(id => id !== userId)) {
+              seenByOthers = true;
+            }
+          }
+
+          if (seenByOthers) {
+            const seenMark = document.createElement("div");
+            seenMark.classList.add("seen");
+            seenMark.textContent = "✓ Visto";
+            div.appendChild(seenMark);
+          }
+
+          chatBox.appendChild(div);
+          lastMsgId = msgId;
+        }
+
+        chatBox.scrollTop = chatBox.scrollHeight;
+
+        // Registra che l'utente ha visto l'ultimo messaggio
+        if (lastMsgId) {
+          const seenRef = doc(db, "seenStatus", lastMsgId);
+          const seenSnap = await getDoc(seenRef);
+
+          if (seenSnap.exists()) {
+            const existingData = seenSnap.data();
+            const userIds = existingData.userIds || [];
+            if (!userIds.includes(userId)) {
+              userIds.push(userId);
+              await setDoc(seenRef, { userIds: userIds, updatedAt: serverTimestamp() });
+            }
+          } else {
+            await setDoc(seenRef, { userIds: [userId], updatedAt: serverTimestamp() });
+          }
+        }
+      });
+    }
+
+    window.sendMessage = async function() {
+      const text = messageInput.value.trim();
+      if (text && nickname) {
+        await addDoc(collection(db, "messages"), {
+          text,
+          nickname,
+          createdAt: serverTimestamp()
+        });
+        messageInput.value = "";
+      }
+    };
+  </script>
+</body>
+</html>
